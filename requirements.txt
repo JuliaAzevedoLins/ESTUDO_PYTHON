@@ -1,0 +1,6 @@
+fastapi
+pydantic
+yfinance
+pandas
+numpy
+uvicorn[standard]
