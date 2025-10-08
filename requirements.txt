@@ -1,6 +1,13 @@
-fastapi
-pydantic
 yfinance
 pandas
 numpy
+scikit-learn
+matplotlib
+seaborn
+plotly
+certifi
+fastapi
+requests
+
+
 uvicorn[standard]
