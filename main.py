@@ -45,7 +45,7 @@ def analisar_carteiras(tickers):
     # Calcular retornos diários
     retornos = dados.pct_change().dropna()
     n_ativos = len(retornos.columns)
-    n_carteiras = 500
+    n_carteiras = 5000
     retornos_anuais = retornos.mean() * 252
     cov_matrix = retornos.cov() * 252
 
@@ -85,44 +85,46 @@ def analisar_carteiras(tickers):
     df.loc[idx_moderado, 'Perfil'] = 'Moderado'
     df.loc[idx_arriscado, 'Perfil'] = 'Arriscado'
 
-    # Gerar gráfico Plotly
-    fig = px.scatter(df, x='Risco', y='Retorno', color='Retorno',
-                     hover_data=[*retornos.columns, 'Perfil'],
-                     title='Fronteira Eficiente Interativa')
-    fig.update_traces(marker=dict(size=7, opacity=0.5))
-    fig.update_layout(width=900, height=600,
-                      xaxis_title="Risco (Volatilidade Anualizada)",
-                      yaxis_title="Retorno Esperado Anualizado")
-    # Adicionar pontos destacados
-    fig.add_scatter(
-        x=[riscos_carteira[idx_conservador]],
-        y=[retornos_carteira[idx_conservador]],
-        mode='markers+text',
-        marker=dict(size=12, color='blue'),
-        name='Conservador',
-        text=['Conservador'],
-        textposition='top center'
+    # Gerar gráfico Plotly com degradê azul, responsivo, sem colorbar e sem labels dos eixos
+    fig = px.scatter(
+        df,
+        x='Risco',
+        y='Retorno',
+        color='Risco',
+        color_continuous_scale=['#1976d2', '#3d5872', '#162c3f'],
+        hover_data=[*retornos.columns],
     )
-    fig.add_scatter(
-        x=[riscos_carteira[idx_moderado]],
-        y=[retornos_carteira[idx_moderado]],
-        mode='markers+text',
-        marker=dict(size=12, color='orange'),
-        name='Moderado',
-        text=['Moderado'],
-        textposition='top center'
+    fig.update_traces(marker=dict(size=14, opacity=0.7))
+    fig.update_layout(
+        autosize=True,
+        width=None,
+        height=None,
+        margin=dict(l=12, r=12, t=32, b=32),
+        font=dict(size=18, family="Arial, sans-serif"),
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        xaxis_title=None,
+        yaxis_title=None
     )
-    fig.add_scatter(
-        x=[riscos_carteira[idx_arriscado]],
-        y=[retornos_carteira[idx_arriscado]],
-        mode='markers+text',
-        marker=dict(size=12, color='red'),
-        name='Arriscado',
-        text=['Arriscado'],
-        textposition='top center'
-    )
+    fig.update_coloraxes(showscale=False)
     # Salvar gráfico como HTML
-    fig.write_html("fronteira_eficiente.html")
+    fig.write_html(
+        "fronteira_eficiente.html",
+        full_html=True,
+        include_plotlyjs='cdn',
+        config={
+            "responsive": True,
+            "displayModeBar": False,
+            "scrollZoom": True,
+        }
+    )
+    # Adiciona meta tag viewport para responsividade mobile
+    with open("fronteira_eficiente.html", "r", encoding="utf-8") as f:
+        html = f.read()
+    if '<head>' in html:
+        html = html.replace('<head>', '<head>\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">')
+    with open("fronteira_eficiente.html", "w", encoding="utf-8") as f:
+        f.write(html)
 
     # Montar resposta dos perfis
     def perfil_dict(idx):
