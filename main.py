@@ -78,7 +78,7 @@ def processaDiversificacao(tickers):
     # 2️⃣ Retornos (Se o código chegou até aqui, os dados estão válidos)
     retornos = dados.pct_change().dropna()
     n_ativos = len(retornos.columns)
-    n_carteiras = 20000
+    n_carteiras = 5000
 
     # Lógica de Otimização de Portfólio (mantida a original)
     retornos_anuais = retornos.mean() * 252
