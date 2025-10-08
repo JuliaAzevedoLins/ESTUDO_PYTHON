@@ -78,7 +78,7 @@ def processaDiversificacao(tickers):
     # 2️⃣ Retornos (Se o código chegou até aqui, os dados estão válidos)
     retornos = dados.pct_change().dropna()
     n_ativos = len(retornos.columns)
-    n_carteiras = 5000
+    n_carteiras = 500
 
     # Lógica de Otimização de Portfólio (mantida a original)
     retornos_anuais = retornos.mean() * 252
@@ -165,3 +165,4 @@ def create_item(item: Diversificacao):
         # Captura qualquer outro erro inesperado e retorna 500
         # O str(e) aqui deve ser a mensagem de erro do log
         raise HTTPException(status_code=500, detail=f"Erro interno no processamento: {str(e)}")
+
