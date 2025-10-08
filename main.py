@@ -1,86 +1,51 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from fastapi.middleware.cors import CORSMiddleware
-from datetime import date # Importação para obter a data atual
+"""
+API REST para análise de carteiras de ações e geração da fronteira eficiente.
+Endpoints:
+  - GET /analise?tickers=PETR4.SA,VALE3.SA,ITSA4.SA
+      Retorna os perfis Conservador, Moderado e Arriscado com pesos, retorno e risco.
+  - GET /grafico
+      Retorna o HTML do gráfico da fronteira eficiente.
+"""
 
+# Dependências: fastapi, uvicorn, yfinance, numpy, pandas, plotly, scikit-learn
+from fastapi import FastAPI, Query, Response
+from fastapi.responses import JSONResponse, HTMLResponse
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import plotly.express as px
+import os
 
-# Inicialização do FastAPI
 app = FastAPI()
 
-# ----------------------------------------------------
-# 1. Configurações e Rota Raiz
-# ----------------------------------------------------
+# Função principal de análise das carteiras
+# Recebe lista de tickers, simula carteiras, calcula perfis e gera gráfico
+# Retorna dicionário com os perfis
 
-# Configuração CORS (Permite acesso de qualquer frontend)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"]
-)
+def analisar_carteiras(tickers):
+    # Baixar preços históricos
+    dados = yf.download(tickers, start="2020-01-01", end="2025-08-08", auto_adjust=True)
 
-# Rota de Boas-Vindas (GET /) - Resolve o erro "Not Found" na raiz
-@app.get("/")
-def read_root():
-    return {"status": "ok", "message": "API de Diversificação de Portfólios está online! Use /docs para ver a documentação."}
-
-# Rota de Verificação de Saúde (GET /health) - Para o Render Health Check
-@app.get("/health")
-def health_check():
-    return {"status": "ok"}
-
-# Modelo de dados para o POST
-class Diversificacao(BaseModel):
-    names: list[str]
-
-# ----------------------------------------------------
-# 2. Lógica de Processamento
-# ----------------------------------------------------
-
-def processaDiversificacao(tickers):
-    # Data final é a data atual (ou último dia de negociação)
-    end_date = date.today()
-
-    # 1️⃣ Baixar preços históricos
-    # Removido 'end="2025-08-08"' para evitar problemas de data no futuro/fuso horário
-    dados = yf.download(tickers, start="2020-01-01", end=end_date.strftime("%Y-%m-%d"), auto_adjust=True)
-
-    # 🛑 VERIFICAÇÃO CRÍTICA: Verifica se dados foram baixados
-    if dados.empty:
-        raise ValueError("Falha ao baixar dados. Verifique se os tickers estão corretos ou se há dados históricos disponíveis.")
-        
-    # Ajustar se multi-index
+    # Selecionar colunas de preços
     if isinstance(dados.columns, pd.MultiIndex):
         if "Adj Close" in dados.columns.levels[0]:
             dados = dados.xs('Adj Close', axis=1, level=0)
         elif "Close" in dados.columns.levels[0]:
             dados = dados.xs('Close', axis=1, level=0)
         else:
-            raise ValueError("Nenhuma coluna de preços Adj Close ou Close encontrada no DataFrame.")
+            raise ValueError("Nenhuma coluna de preços encontrada no DataFrame")
     else:
         if "Adj Close" in dados.columns:
             dados = dados["Adj Close"]
         elif "Close" in dados.columns:
             dados = dados["Close"]
         else:
-            raise ValueError("Nenhuma coluna de preços Adj Close ou Close encontrada no DataFrame")
+            raise ValueError("Nenhuma coluna de preços encontrada no DataFrame")
 
-    # 🛑 VERIFICAÇÃO CRÍTICA: Filtra tickers que não retornaram dados (colunas NaN)
-    dados = dados.dropna(axis=1, how='all')
-
-    if dados.empty:
-         raise ValueError("Nenhum ticker fornecido ou todos os tickers falharam ao retornar dados válidos.")
-         
-    # 2️⃣ Retornos (Se o código chegou até aqui, os dados estão válidos)
+    # Calcular retornos diários
     retornos = dados.pct_change().dropna()
     n_ativos = len(retornos.columns)
     n_carteiras = 500
-
-    # Lógica de Otimização de Portfólio (mantida a original)
     retornos_anuais = retornos.mean() * 252
     cov_matrix = retornos.cov() * 252
 
@@ -102,67 +67,99 @@ def processaDiversificacao(tickers):
     riscos_carteira = np.array(riscos_carteira)
     pesos_carteira = np.array(pesos_carteira)
 
-    # Perfis
-    # (A lógica de perfis falharia se o array estivesse vazio,
-    #  mas a verificação de dados vazios acima já protege contra isso)
-    
-    # Índice Conservador: Mínimo risco
-    if not riscos_carteira.size:
-        raise ValueError("Não foi possível gerar carteiras suficientes para análise.")
-
+    # Identificar carteiras para perfis de investidor
     idx_conservador = np.argmin(riscos_carteira)
     idx_arriscado = np.argmax(retornos_carteira)
-    idx_moderado = np.argmin(
-        np.abs((riscos_carteira - riscos_carteira.mean()) +
-               (retornos_carteira - retornos_carteira.mean()))
-    )
+    idx_moderado = np.argmin(np.abs((riscos_carteira - riscos_carteira.mean()) +
+                                    (retornos_carteira - retornos_carteira.mean())))
 
-    # Monta resposta JSON (mantida a original)
-    resposta = {
-        "fronteira": [
-            {
-                "risco": float(risco),
-                "retorno": float(retorno),
-                "pesos": {
-                    ativo: round(float(peso * 100), 2)
-                    for ativo, peso in zip(retornos.columns, pesos)
-                }
-            }
-            for risco, retorno, pesos in zip(riscos_carteira, retornos_carteira, pesos_carteira)
-        ],
-        "perfis": {
-            "conservador": {
-                "risco": float(riscos_carteira[idx_conservador]),
-                "retorno": float(retornos_carteira[idx_conservador])
-            },
-            "moderado": {
-                "risco": float(riscos_carteira[idx_moderado]),
-                "retorno": float(retornos_carteira[idx_moderado])
-            },
-            "arriscado": {
-                "risco": float(riscos_carteira[idx_arriscado]),
-                "retorno": float(retornos_carteira[idx_arriscado])
-            }
+    # Criar DataFrame para Plotly
+    df = pd.DataFrame({
+        'Risco': riscos_carteira,
+        'Retorno': retornos_carteira,
+    })
+    for i, ativo in enumerate(retornos.columns):
+        df[ativo] = (pesos_carteira[:, i] * 100).round(2)
+    df['Perfil'] = ''
+    df.loc[idx_conservador, 'Perfil'] = 'Conservador'
+    df.loc[idx_moderado, 'Perfil'] = 'Moderado'
+    df.loc[idx_arriscado, 'Perfil'] = 'Arriscado'
+
+    # Gerar gráfico Plotly
+    fig = px.scatter(df, x='Risco', y='Retorno', color='Retorno',
+                     hover_data=[*retornos.columns, 'Perfil'],
+                     title='Fronteira Eficiente Interativa')
+    fig.update_traces(marker=dict(size=7, opacity=0.5))
+    fig.update_layout(width=900, height=600,
+                      xaxis_title="Risco (Volatilidade Anualizada)",
+                      yaxis_title="Retorno Esperado Anualizado")
+    # Adicionar pontos destacados
+    fig.add_scatter(
+        x=[riscos_carteira[idx_conservador]],
+        y=[retornos_carteira[idx_conservador]],
+        mode='markers+text',
+        marker=dict(size=12, color='blue'),
+        name='Conservador',
+        text=['Conservador'],
+        textposition='top center'
+    )
+    fig.add_scatter(
+        x=[riscos_carteira[idx_moderado]],
+        y=[retornos_carteira[idx_moderado]],
+        mode='markers+text',
+        marker=dict(size=12, color='orange'),
+        name='Moderado',
+        text=['Moderado'],
+        textposition='top center'
+    )
+    fig.add_scatter(
+        x=[riscos_carteira[idx_arriscado]],
+        y=[retornos_carteira[idx_arriscado]],
+        mode='markers+text',
+        marker=dict(size=12, color='red'),
+        name='Arriscado',
+        text=['Arriscado'],
+        textposition='top center'
+    )
+    # Salvar gráfico como HTML
+    fig.write_html("fronteira_eficiente.html")
+
+    # Montar resposta dos perfis
+    def perfil_dict(idx):
+        return {
+            "Retorno": float(round(retornos_carteira[idx], 4)),
+            "Risco": float(round(riscos_carteira[idx], 4)),
+            "Pesos": {ativo: float(round(pesos_carteira[idx][i], 4)) for i, ativo in enumerate(retornos.columns)}
         }
+
+    return {
+        "Conservador": perfil_dict(idx_conservador),
+        "Moderado": perfil_dict(idx_moderado),
+        "Arriscado": perfil_dict(idx_arriscado)
     }
 
-    return resposta
-
-# ----------------------------------------------------
-# 3. Endpoint Principal
-# ----------------------------------------------------
-
-@app.post("/diversificacao")
-def create_item(item: Diversificacao):
+# Endpoint principal: análise dos perfis
+@app.get("/analise", response_class=JSONResponse)
+async def analise_endpoint(tickers: str = Query(..., description="Lista de tickers separada por vírgula")):
+    """
+    Endpoint que recebe tickers e retorna os perfis de investidor.
+    Exemplo: /analise?tickers=PETR4.SA,VALE3.SA,ITSA4.SA
+    """
+    tickers_list = [t.strip() for t in tickers.split(",") if t.strip()]
     try:
-        # Tenta executar a função de processamento
-        resultado = processaDiversificacao(item.names)
-        return resultado
-    except ValueError as ve:
-        # Captura erros de lógica de dados e retorna 400 Bad Request (Dados Inválidos)
-        raise HTTPException(status_code=400, detail=str(ve))
+        resultado = analisar_carteiras(tickers_list)
+        return JSONResponse(content=resultado)
     except Exception as e:
-        # Captura qualquer outro erro inesperado e retorna 500
-        # O str(e) aqui deve ser a mensagem de erro do log
-        raise HTTPException(status_code=500, detail=f"Erro interno no processamento: {str(e)}")
+        return JSONResponse(content={"erro": str(e)}, status_code=400)
 
+# Endpoint para servir o gráfico HTML
+@app.get("/grafico", response_class=HTMLResponse)
+async def grafico_endpoint():
+    """
+    Endpoint que retorna o HTML do gráfico da fronteira eficiente.
+    """
+    if not os.path.exists("fronteira_eficiente.html"):
+        return Response(content="Gráfico não gerado ainda. Execute /analise primeiro.", media_type="text/plain", status_code=404)
+    with open("fronteira_eficiente.html", "r", encoding="utf-8") as f:
+        html_content = f.read()
+    return HTMLResponse(content=html_content)
